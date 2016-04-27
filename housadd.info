@@ -1,3 +1,5 @@
-name = Housadd
-description = A description of what your module does.
+name = Housing & User add module
+description = "Добавляет пользователя на сайте, страницу и электронную почту в Яндекс PDD"
 core = 7.x
+
+configure = admin/config/braslavskie/housadd

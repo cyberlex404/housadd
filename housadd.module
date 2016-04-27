@@ -7,6 +7,196 @@
 /**
  * Implements hook_menu().
  */
-function housadd_menu() {
 
+define("YAPDDAPI_MAIL_ADD", 'https://pddimp.yandex.ru/api2/admin/email/add');
+
+function housadd_menu() {
+  $items['admin/billing/new'] = array(
+    'title' => 'Add client',
+    'description' => 'This menu entry will not appear and the page will not be accessible without the "access protected menu example" permission.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('housadd_billing_new'),
+    'access arguments' => array('administer site configuration'),
+    'weight' => 10,
+  );
+
+  $items['admin/config/braslavskie/housadd'] = array(
+    'title' => 'Housing add setting',
+    'description' => 'Settings link',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('housadd_configure_form'),
+    'access arguments' => array('administer site configuration'),
+    'file' => 'housadd.admin.inc',
+  );
+  return $items;
+}
+
+function housadd_billing_new() {
+  $form = array();
+  $form['title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name'),
+    '#default_value' => '',
+    '#size' => 30,
+    '#maxlength' => 128,
+    '#ajax' => array(
+      'callback' => 'housadd_billing_new_transliteration',
+      'wrapper' => 'login-translite-name',
+      'method' => 'replace',
+      'effect' => 'fade',
+    ),
+   // '#required' => TRUE,
+  );
+  $form['notification'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Notification e-mail'),
+    '#default_value' => 'director@braslavskie.by',
+  );
+  $form['login'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Login'),
+    '#default_value' => '',
+    '#maxlength' => 30,
+    '#size' => 30,
+    '#field_suffix' => '',
+    '#suffix' => '<div id="login-translite-name"></div>',
+  //  '#description' => t('A unique name to construct the URL for the menu. It must only contain lowercase letters, numbers and hyphens.'),
+  );
+
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['create'] = array(
+    '#type' => 'submit',
+    '#name' => 'create',
+    '#value' => t('Create'),
+  );
+  $form['actions']['gocreate'] = array(
+    '#type' => 'submit',
+    '#name' => 'gocreate',
+    '#value' => t('Create & go new profile'),
+  );
+  return $form;
+}
+
+function housadd_billing_new_transliteration($form, $form_state){
+  $out = array(
+    '#markup' => 'Транслитерация: ' . strtolower(transliteration_get($form_state['values']['title'], '')),
+    '#prefix' => '<span class="hint-transl">',
+    '#suffix' => '</span>',
+  );
+  return $out;
+}
+
+function housadd_billing_new_submit($form, &$form_state) {
+  //dpm($form_state);
+
+  $login = $form_state['values']['login'];
+  $pass = user_password(8);
+  $yapdd = housadd_yapdd_add_mail($login, $pass);
+
+  if(isset($yapdd['login'])) {
+    $new_user = entity_create('user', array());
+
+    $roles = array(4);
+    $new_user->name      = $login;
+    $new_user->status    = 1;
+    $new_user->roles     = drupal_map_assoc($roles + array(DRUPAL_AUTHENTICATED_RID));
+    $new_user->init      = $yapdd['login'];
+    $new_user->mail      = $yapdd['login'];
+    $new_user->pass      = $pass;
+    $client = entity_metadata_wrapper('user', $new_user);
+    $client->save();
+
+    $node = entity_create('node', array('type' => 'housing'));
+    $node->uid = $client->uid->value();
+    $emw_node = entity_metadata_wrapper('node', $node);
+    $emw_node->title = $form_state['values']['title'];
+   /// $emw_node->field_text_field = 'Field value text';
+    $emw_node->save();
+
+    drupal_mail('system', 'add_notify', $form_state['values']['notification'], language_default(),array(
+      'context' => array(
+        'subject' => 'Новый аккаунт клиента ' . $client->mail->value(),
+        'message' => 'Логин: ' . $login . ', ' . $client->mail->value() . "\n" .
+          'Пароль: ' . $pass . '',
+      ),
+    ));
+
+    if($form_state['clicked_button']['#name'] == 'gocreate') {
+      drupal_goto('user/' . $client->uid->value());
+    }
+  }
+
+
+
+}
+/*
+ * curl -H 'PddToken: UIYKCPNLE6UN7LRC234FBARGZIIDBQVQMNRTA63AUQRLHNPLXTCA' -d 'domain=braslavskie.by&login=newlogin_test1&password=1234567890' 'https://pddimp.yandex.ru/api2/admin/email/add'
+ */
+
+function housadd_yapdd_add_mail($login, $pass = NULL) {
+  $conf = variable_get('yandex_pdd_hous', NULL);
+  if(is_null($pass)) {
+    $pass = user_password();
+  }
+  $data_arr = array(
+    'domain' => $conf['domain'],
+    'login' => $login,
+    'password' => $pass,
+  );
+
+  $result = drupal_http_request(YAPDDAPI_MAIL_ADD, array(
+    'headers' => array(
+      'PddToken' => $conf['pdd_token'],
+      'Content-Type' => 'application/x-www-form-urlencoded',
+    ),
+    'method' => 'POST',
+    'data' => drupal_http_build_query($data_arr),
+  ));
+  $data = drupal_json_decode($result->data);
+//  dpm($data, 'add mail');
+
+  if(isset($data['error']) || $data['success'] == 'error') {
+    housadd_set_error($data['error']);
+  }
+  return $data;
+}
+
+/*
+ *   /*https://pddimp.yandex.ru/api2/admin/email/ml/add
+
+
+$host = 'https://pddimp.yandex.ru/api2/admin/email/ml/add';
+$result = drupal_http_request($host, array(
+  'headers' => array(
+    //'PddToken' => $conf['pdd_token'],
+    'PddToken' => 'UIYKCPNLE6UN7LRC234FBARGZIIDBQVQMNRTA63AUQRLHNPLXTCA',
+    'Content-Type' => 'application/x-www-form-urlencoded',
+  ),
+  'method' => 'POST',
+  'data' => 'domain=braslavskie.by.&maillist=newmaillist' . time(),
+));
+dpm($result, 'mail list');
+// dpm($_POST);
+ */
+
+function housadd_set_error($code) {
+  switch($code) {
+    case 'unknown': $message = 'Произошел временный сбой или ошибка работы API (повторите запрос позже)'; break;
+    case 'no_token': $message = 'Не передан обязательный параметр (no_token)'; break;
+    case 'no_domain': $message = 'Не передан обязательный параметр (no_domain)'; break;
+    case 'no_ip': $message = 'Не передан обязательный параметр (no_ip)'; break;
+    case 'bad_domain': $message = 'Имя домена не указано или не соответствует RFC'; break;
+    case 'prohibited ': $message = 'Запрещенное имя домена'; break;
+    case 'bad_token': $message = 'передан неверный ПДД-токен (логин, пароль)'; break;
+    case 'bad_login': $message = 'передан неверный ПДД-токен (логин, пароль)'; break;
+    case 'bad_passwd': $message = 'Передан неверный ПДД-токен (логин, пароль)'; break;
+    case 'no_auth': $message = 'Не передан заголовок PddToken'; break;
+    case 'not_allowed': $message = 'Пользователю недоступна данная операция (он не является администратором этого домена)'; break;
+    case 'blocked': $message = 'Домен заблокирован (например, за спам и т.п.)'; break;
+    case 'occupied': $message = 'Имя используется другим пользователем'; break;
+    case 'domain_limit_reached': $message = 'Превышено допустимое количество подключенных доменов (50)'; break;
+    case 'no_reply': $message = 'Яндекс.Почта для домена не может установить соединение с сервером-источником для импорта'; break;
+    default : $message = 'Неизвестный код ошибки';
+  }
+  drupal_set_message($message, 'error');
 }
